@@ -7,53 +7,64 @@ from langchain_core.output_parsers import StrOutputParser
 load_dotenv()
 
 # ==========================================
-# ১. LangSmith Environment Setup & Config
+# ১. LangSmith Config & Environment
 # ==========================================
 os.environ["LANGCHAIN_TRACING_V2"] = "true"
 os.environ["LANGCHAIN_PROJECT"] = "langsmith-sequential-chain-demo"
-# ensure LANGCHAIN_API_KEY is present in your .env file
+
+# Force synchronous trace submission (preserves all steps)
+os.environ["LANGCHAIN_CALLBACKS_BACKGROUND"] = "false" 
 
 # ==========================================
-# ২. Prompt Templates
+# ২. Prompt Templates & Output Parser
 # ==========================================
 prompt1 = PromptTemplate(
     template='Generate a detailed report on {topic}',
     input_variables=['topic']
-)
+).with_config({"run_name": "ReportPromptBuilder"})
 
 prompt2 = PromptTemplate(
     template='Generate a 5 pointer summary from the following text \n {text}',
     input_variables=['text']
-)
+).with_config({"run_name": "SummaryPromptBuilder"})
+
+parser = StrOutputParser().with_config({"run_name": "TextOutputParser"})
 
 # ==========================================
-# ৩. LLM Model Setup (Hugging Face Router API)
+# ৩. LLM Model Setup
 # ==========================================
 model = ChatOpenAI(
     model="Qwen/Qwen2.5-Coder-32B-Instruct",
     api_key=os.getenv("HUGGINGFACEHUB_API_TOKEN"),
     base_url="https://router.huggingface.co/v1",
     temperature=0.7,
-)
-
-parser = StrOutputParser()
+).with_config({"run_name": "Qwen32B_LLM"})
 
 # ==========================================
-# ৪. Chain Creation (LCEL)
+# ৪. Sub-Chains for Explicit Tracing
 # ==========================================
-chain = prompt1 | model | parser | prompt2 | model | parser
+# Step 1 Sub-chain
+step1_chain = (prompt1 | model | parser).with_config({"run_name": "Step1_Report_Generator"})
+
+# Step 2 Sub-chain (Map Step 1 output string to 'text' key expected by prompt2)
+step2_chain = (
+    (lambda text_input: {"text": text_input}) 
+    | prompt2 
+    | model 
+    | parser
+).with_config({"run_name": "Step2_Summary_Generator"})
+
+# Master Sequential Chain
+chain = (step1_chain | step2_chain).with_config({"run_name": "Sequential_Master_Chain"})
 
 # ==========================================
-# ৫. Execution with Config & Metadata
+# ৫. Execution
 # ==========================================
 config = {
-    "run_name": "Sequential_Report_Summary_Run",
-    "tags": ["masterclass", "qwen-2.5", "sequential-chain"],
+    "tags": ["masterclass", "qwen-2.5", "detailed-tracing"],
     "metadata": {
         "user_id": "safayet",
-        "environment": "development",
-        "model_used": "Qwen/Qwen2.5-Coder-32B-Instruct",
-        "chain_type": "two-step-summary"
+        "environment": "development"
     }
 }
 
